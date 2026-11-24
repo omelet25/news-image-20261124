@@ -5,6 +5,10 @@ Draws a dense broadsheet newspaper front page for Tuesday 24 November 2026
 entirely in code: a hand-designed stroke font, flat pictogram panels, a
 dotted world map and the day's stories as numbered cards and briefs.
 Standard library only. Writes /output/entry.png (1024x1024, deterministic).
+
+Revision 2: readability pass. The page is rendered on a 4096x4096 internal
+canvas and reduced with a 4x4 area-average filter, small text uses thicker
+strokes, larger minimum sizes and darker ink, so fine print stays legible.
 """
 
 import math
@@ -12,7 +16,7 @@ import os
 import struct
 import zlib
 
-SS = 2                      # supersampling factor (internal render scale)
+SS = 4                      # supersampling factor (internal render scale)
 FW, FH = 1024, 1024         # final image size
 W, H = FW * SS, FH * SS     # internal canvas size
 
@@ -31,6 +35,7 @@ PALE = (219, 227, 240)
 PALE_S = (238, 229, 203)
 PALE_G = (224, 226, 220)
 GRAY = (104, 106, 112)
+GRAY_D = (52, 54, 62)       # dark ink for small print (contrast)
 GRAY_L = (172, 170, 162)
 GREEN = (22, 122, 80)
 TEAL = (28, 110, 120)
@@ -148,23 +153,28 @@ def rect_outline(x, y, w, h, lw, c):
 
 # ---------------------------------------------------------------- png out
 def save_png(path):
+    """Downsample the internal canvas by SS with an area-average filter."""
     out = bytearray(FW * FH * 3)
+    w3 = W * 3
     for oy in range(FH):
-        for ox in range(FW):
-            acc0 = acc1 = acc2 = 0
-            base = ((oy * SS) * W + ox * SS) * 3
-            for dy in range(SS):
-                row = base + dy * W * 3
-                for dx in range(SS):
-                    i = row + dx * 3
-                    acc0 += BUF[i]
-                    acc1 += BUF[i + 1]
-                    acc2 += BUF[i + 2]
-            n = SS * SS
-            o = (oy * FW + ox) * 3
-            out[o] = acc0 // n
-            out[o + 1] = acc1 // n
-            out[o + 2] = acc2 // n
+        acc = None
+        for dy in range(SS):
+            s0 = (oy * SS + dy) * w3
+            row = list(BUF[s0:s0 + w3])
+            chans = []
+            for c0 in range(3):
+                ch = row[c0::3]
+                parts = [ch[d::SS] for d in range(SS)]
+                chans.append([sum(t) // SS for t in zip(*parts)])
+            havg = [0] * (FW * 3)
+            for c0 in range(3):
+                havg[c0::3] = chans[c0]
+            if acc is None:
+                acc = havg
+            else:
+                acc = [a + b for a, b in zip(acc, havg)]
+        o = oy * FW * 3
+        out[o:o + FW * 3] = bytes(v // SS for v in acc)
     raw = bytearray()
     stride = FW * 3
     for yy in range(FH):
@@ -326,15 +336,19 @@ def text_width(text, size, tracking=0.0):
 
 def draw_text(x, y, text, size, color, bold=False, tracking=0.0,
               align="left", serif=False):
-    """Draw text with baseline at y (final-image coordinates)."""
+    """Draw text with baseline at y (final-image coordinates).
+
+    Stroke widths are thicker than a hairline font would use, so that
+    small sizes survive the downsample without breaking up.
+    """
     w = text_width(text, size, tracking)
     if align == "center":
         x -= w / 2.0
     elif align == "right":
         x -= w
     sc = size / 18.0
-    sw = size * (0.118 if bold else 0.082)
-    sw = max(0.85, sw)
+    sw = size * (0.140 if bold else 0.106)
+    sw = max(1.05, sw)
     cx = x
     for ch in text:
         g = _glyph(ch)
@@ -451,8 +465,8 @@ def draw_map(x, y, w, h):
         fill_circle(cx, cy, 7.6, PAPER)
         fill_circle(cx, cy, 6.4, RED if i % 3 == 0 else NAVY)
         label = str(i + 1)
-        tw = text_width(label, 8.6)
-        draw_text(cx - tw / 2, cy + 2.6, label, 8.6, PAPER, bold=True)
+        tw = text_width(label, 9.4)
+        draw_text(cx - tw / 2, cy + 2.9, label, 9.4, PAPER, bold=True)
 
 
 # ---------------------------------------------------------------- pictograms
@@ -743,7 +757,7 @@ ILLUS = [illu_nato, illu_estonia, illu_libya, illu_yemen, illu_myanmar,
 CARDS = [
     dict(place="BERLIN, GERMANY — NATO", tag="ON RECORD",
          head="NATO's Shield Now Reaches Into Space",
-         body="Rutte said NATO's defence pledge extends to orbit, after "
+         body="Rutte said NATO's pledge extends to orbit, after "
               "reports Russia is readying a nuclear-armed satellite.",
          src="WIRE REPORTS", banner=("SHIELD IN", "ORBIT")),
     dict(place="MOSCOW, RUSSIA — ESTONIA", tag="CLAIM",
@@ -754,12 +768,12 @@ CARDS = [
     dict(place="BENGHAZI, LIBYA — WAR AT SEA", tag="ON RECORD",
          head="Libya Demands Kyiv Explain Ship Strike",
          body="Libya's unity government asked Kyiv to explain the strike "
-              "on Russian ships off Benghazi and any use of its soil.",
+              "on Russian ships off Benghazi, and any use of its soil.",
          src="WIRE REPORTS", banner=("SEA DISPUTE", "WIDENS")),
     dict(place="YEMEN — HUMANITARIAN", tag="ON RECORD",
          head="360,000 Displaced in Yemen Since August",
          body="UN figures confirm 323 civilian casualties, 76 of them "
-              "dead, as fighting drives a vast displacement crisis.",
+              "dead, as fighting drives a vast displacement.",
          src="UNITED NATIONS", banner=("AID AT", "THE LIMIT")),
     dict(place="NAYPYIDAW, MYANMAR — LAW", tag="ON RECORD",
          head="14 Nations: ICJ Ruling Binds Myanmar",
@@ -768,8 +782,8 @@ CARDS = [
          src="JOINT STATEMENT", banner=("THE COURT", "HAS SPOKEN")),
     dict(place="SEOUL, SOUTH KOREA — AIR DEFENCE", tag="ON RECORD",
          head="Russian Jets Enter Korea's Air Zone",
-         body="Fighters scrambled as Russian aircraft entered the air "
-              "defence zone over the East Sea; a formal protest follows.",
+         body="Fighters scrambled as Russian jets entered the air "
+              "defence zone over the East Sea; a protest follows.",
          src="KOREAN MILITARY", banner=("JETS", "SCRAMBLE")),
     dict(place="VILLAVICENCIO, COLOMBIA — ATTACK", tag="REPORTED",
          head="Car Bomb Wrecks Government Building in Meta",
@@ -806,7 +820,7 @@ CARDS = [
 BRIEFS = [
     ("BERLIN", "Merz: Europe is ready to talk with Russia; advisers may meet in Abu Dhabi.", "WIRE"),
     ("KYIV", "Leaked data puts Russian soldiers killed in Ukraine at nearly 500,000.", "JAPAN TIMES"),
-    ("ANKARA", "Türkiye is building a scheme to keep Black Sea merchant shipping safe.", "UN AMBASSADOR"),
+    ("ANKARA", "Türkiye builds a scheme to keep Black Sea merchant shipping safe.", "UN AMBASSADOR"),
     ("HELSINKI", "Finland summons Russia's ambassador over 'unacceptable' actions.", "WIRE"),
     ("BRUSSELS", "EU adds The Base's founder, a neo-Nazi, to its terror sanctions list.", "WIRE"),
     ("WASHINGTON", "Senate panel probes VP Vance's links to a Venezuela oil contract.", "JAPAN TIMES"),
@@ -868,13 +882,13 @@ def rich_wrap(segments, size, maxw):
     return lines, space_w
 
 
-def rich_draw(lines, space_w, x, y, size):
+def rich_draw(lines, space_w, x, y, size, leading=1.22):
     for line in lines:
         cx = x
         for wd, color, bold, wdt in line:
             draw_text(cx, y, wd, size, color, bold=bold)
             cx += wdt + space_w
-        y += size * 1.22
+        y += size * leading
     return y
 
 
@@ -892,7 +906,7 @@ def draw_card(i, card, x, y):
     ILLUS[i](x, y, 78, 79)
     fill_rect(x, y + 79, 78, 21, NAVY_D)
     for li, line in enumerate(card["banner"]):
-        draw_text(x + 39, y + 88.3 + li * 10, line, 8.4, PAPER,
+        draw_text(x + 39, y + 87.6 + li * 9.8, line, 9.0, PAPER,
                   bold=True, align="center")
     rect_outline(x, y, 78, 100, 0.8, INK)
     fill_circle(x + 10.5, y + 10.5, 7.4, PAPER)
@@ -903,10 +917,10 @@ def draw_card(i, card, x, y):
     tx = x + 89
     tw = w - 89 - 2
     tag = card["tag"]
-    tagw = text_width(tag, 8.2, 0.4) + 9
+    tagw = text_width(tag, 8.8, 0.4) + 10
     tagx = x + w - 2 - tagw
-    fill_rect(tagx, y + 1, tagw, 11.5, TAG_COLORS[tag])
-    draw_text(tagx + tagw / 2, y + 9.3, tag, 8.2, PAPER, bold=True,
+    fill_rect(tagx, y + 1, tagw, 12.5, TAG_COLORS[tag])
+    draw_text(tagx + tagw / 2, y + 9.8, tag, 8.8, PAPER, bold=True,
               tracking=0.4, align="center")
     msize = fit_single(card["place"], 10, tagx - 5 - tx, bold=True,
                        tracking=0.3)
@@ -916,11 +930,11 @@ def draw_card(i, card, x, y):
     for li, line in enumerate(hlines):
         draw_text(tx, y + 30 + li * 19.5, line, hsize, INK, bold=True)
     maxl = 3 if len(hlines) == 1 else 2
-    ssize, slines = fit_lines(card["body"], 11.5, tw, maxl, min_size=9.5)
+    ssize, slines = fit_lines(card["body"], 12.4, tw, maxl, min_size=10.8)
     sy = y + 30 + 19.5 * (len(hlines) - 1) + 15.5
     for li, line in enumerate(slines):
-        draw_text(tx, sy + li * 14.2, line, ssize, INK)
-    draw_text(tx, y + 96.5, "— " + card["src"], 8.3, GRAY, tracking=0.6)
+        draw_text(tx, sy + li * 15.0, line, ssize, INK)
+    draw_text(tx, y + 96.5, "— " + card["src"], 9.3, GRAY_D, tracking=0.4)
 
 
 def draw_page():
@@ -966,7 +980,7 @@ def draw_page():
     hairline(158, 0.6)
     # UTC timeline
     draw_text(MX, 176, "THE DAY IN UTC", 10.5, INK, bold=True, tracking=0.6)
-    draw_text(MX, 187, "AS REPORTED", 8.3, GRAY, tracking=0.6)
+    draw_text(MX, 187, "AS REPORTED", 9.2, GRAY_D, tracking=0.6)
     seg_x, seg_w = 170.0, 138.0
     labels = ["EARLY", "MORNING", "MIDDAY", "AFTERNOON", "EVENING", "NIGHT"]
     for si, lab in enumerate(labels):
@@ -991,32 +1005,35 @@ def draw_page():
     hairline(624, 1.3, INK)
     draw_text(MX, 641, "THE DAY IN NUMBERS", 12.5, RED, bold=True,
               tracking=1.2)
-    draw_text(998, 641, "EVERY FIGURE FROM THE DAY'S OWN REPORTING", 9,
-              GRAY, tracking=0.6, align="right")
+    draw_text(998, 641, "EVERY FIGURE FROM THE DAY'S OWN REPORTING", 9.6,
+              GRAY_D, tracking=0.6, align="right")
     iw = MW / 7
     for i, (val, lab, col) in enumerate(NUMBERS):
         cx = MX + i * iw + iw / 2
         vsize = fit_single(val, 26, iw - 8, bold=True)
         draw_text(cx, 669, val, vsize, col, bold=True, align="center")
-        _, lab_lines = fit_lines(lab, 8.8, iw - 10, 2)
+        _, lab_lines = fit_lines(lab, 9.8, iw - 10, 2)
         for li, line in enumerate(lab_lines):
-            draw_text(cx, 681 + li * 11, line, 8.8, GRAY, align="center")
+            draw_text(cx, 681 + li * 11.5, line, 9.8, GRAY_D, align="center")
     hairline(700, 0.7)
     # bottom section header
     draw_text(MX, 718, "ALSO ON TUESDAY", 13.5, INK, bold=True,
               tracking=0.8)
     hw = text_width("ALSO ON TUESDAY", 13.5, 0.8)
     draw_text(MX + hw + 9, 718, "— 16 MORE STORIES FROM THE SAME DAY",
-              9.5, GRAY, tracking=0.4)
+              10.2, GRAY_D, tracking=0.4)
     draw_text(712, 718, "THE WORLD ON TUESDAY", 11.5, INK, bold=True,
               tracking=0.6)
     fill_rect(700, 726, 0.7, 238, GRAY_L)
-    # briefs in three columns (6 / 5 / 5)
-    cols = [(0, 6, MX), (6, 11, 238.0), (11, 16, 450.0)]
+    # briefs in three columns (6 / 5 / 5), slightly wider than before.
+    # Height accounting matches rich_draw exactly: each brief costs a
+    # 0.92*size first-baseline offset plus leading*size per wrapped line.
+    cols = [(0, 6, MX), (6, 11, 242.0), (11, 16, 458.0)]
+    lead, gap = 1.15, 3.0
     for a, b, bx in cols:
-        size = 10.6
+        size = 11.4
         per = []
-        while size > 8.6:
+        while True:
             total_h = 0.0
             per = []
             for j in range(a, b):
@@ -1024,22 +1041,23 @@ def draw_page():
                 segs = [(str(j + 13) + " ", RED, True),
                         (city + " — ", NAVY, True),
                         (text + " ", INK, False),
-                        ("· " + src, GRAY, False)]
-                lines, sw_ = rich_wrap(segs, size, 200)
+                        ("· " + src, GRAY_D, False)]
+                lines, sw_ = rich_wrap(segs, size, 208)
                 per.append((lines, sw_))
-                total_h += len(lines) * size * 1.22 + 4
-            if total_h <= 242:
+                total_h += size * 0.92 + len(lines) * size * lead + gap
+            if total_h <= 244 or size <= 9.8:
                 break
             size -= 0.2
         by = 724.0
         for lines, sw_ in per:
-            by = rich_draw(lines, sw_, bx, by + size * 0.92, size) + 4
+            by = rich_draw(lines, sw_, bx, by + size * 0.92, size,
+                           leading=lead) + gap
     # map
     draw_map(712, 730, 286, 176)
     draw_text(712, 922, "WHERE IT HAPPENED — PINS MATCH THE 12 CARDS",
-              8.8, NAVY, bold=True, tracking=0.3)
+              9.6, NAVY, bold=True, tracking=0.3)
     draw_text(712, 935, "Berlin to Kathmandu: one day, six regions.",
-              8.8, GRAY)
+              9.6, GRAY_D)
     # footer
     hairline(976, 1.3, INK)
     draw_text(MX, 993,
@@ -1052,7 +1070,7 @@ def draw_page():
     draw_text(MX, 1007,
               "ON RECORD = said by officials · REPORTED = from news "
               "reports · CLAIM = one side's allegation",
-              9, GRAY)
+              9.6, GRAY_D)
     draw_text(998, 1007, "Pictures and map drawn in code — no photographs.",
               9, INK, align="right")
 
