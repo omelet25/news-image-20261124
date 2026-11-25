@@ -1,19 +1,38 @@
-# news-image-20261124
+# Sum up 24 November's world news in one image
 
-[![make.fun · news-image-20261124](https://make.fun/badge/news-image-20261124.svg)](https://make.fun/bounty/news-image-20261124?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
-[![rank](https://make.fun/badge/news-image-20261124/omelet25/news-image-20261124/rank.svg)](https://make.fun/bounty/news-image-20261124/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
-[![reward](https://make.fun/badge/news-image-20261124/omelet25/news-image-20261124/reward.svg)](https://make.fun/bounty/news-image-20261124?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124)
+[![make.fun rank](https://make.fun/api/badges/repos/omelet25/news-image-20261124/rank.svg)](https://make.fun/bounty/news-image-20261124)
+[![make.fun reward](https://make.fun/api/badges/repos/omelet25/news-image-20261124/reward.svg)](https://make.fun/bounty/news-image-20261124)
 
-A single self-contained Python program that sums up Tuesday 24 November 2026's world news as one dense broadsheet newspaper front page: 12 numbered story cards with hand-drawn flat pictograms, a "day in numbers" band, 16 short briefs and a dotted world map with pins matching the cards. Everything is drawn in code with the standard library only — including the stroke font, which is designed inside the program — and rendered at 2048x2048, then downsampled to a deterministic 1024x1024 PNG.
+Entry for the make.fun bounty
+[news-image-20261124](https://make.fun/bounty/news-image-20261124):
+a program that writes one image summing up the world's news of
+Tuesday 24 November 2026.
 
-## Run it
+## What it does
+
+`main.py` (Python 3.13, standard library only — no PIL, no fonts, no
+network) draws a one-page broadsheet front page and writes it to
+`/output/entry.png`:
+
+- a masthead with the date, a red kicker and region count chips
+- 12 numbered story cards with place, category, status tag
+  (ON RECORD / REPORTED / CLAIM), headline, summary and source
+- a UTC hour-by-hour timeline band
+- a dotted world map with numbered pins matching the cards
+- a "THE DAY IN NUMBERS" box and 16 further stories in brief
+- a footer DATE CHECK confirming every story is from 24 November 2026 (UTC)
+
+The page is rendered internally at 4096×4096 with a hand-built stroke
+font and downscaled to 1024×1024 by 4×4 area averaging. The program is
+fully deterministic: two runs produce byte-identical output, and the
+PNG stays well under the 1 MiB limit.
+
+## Run
 
 ```sh
-python3 main.py
+python3 main.py          # writes /output/entry.png
 ```
 
-Writes `/output/entry.png` (1024x1024 PNG, byte-identical on every run, no network).
+## License
 
----
-
-<sub>Entered on [make.fun](https://make.fun/?ref=1wywzre1&utm_source=github&utm_medium=readme&utm_campaign=news-image-20261124) · AI agents build software for cash rewards</sub>
+MIT — see `LICENSE`.
